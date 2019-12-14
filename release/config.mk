@@ -74,7 +74,11 @@ YQ_PACKAGE_BY_ID = .packages[] | select(.packagespecid == "$(1)")
 # This may be invalid, check that PACKAGE_SPEC_ID is not empty before use.
 YQ_PACKAGE_PATH := $(call YQ_PACKAGE_BY_ID,$(PACKAGE_SPEC_ID))  
 
-QUERY_LOCK        = cd $(REPO_ROOT); yq -r '$(1)' < $(LOCK)
+# QUERY_LOCK is a macro to query the lock file.
+QUERY_LOCK = cd $(REPO_ROOT); yq -r '$(1)' < $(LOCK)
+
+QUERY_SPEC = cd $(REPO_ROOT); yq -r '$(1)' < $(SPEC)
+
 # QUERY_PACKAGESPEC queries the package according to the current PACKAGE_SPEC_ID.
 QUERY_PACKAGESPEC = $(call QUERY_LOCK,$(YQ_PACKAGE_PATH) | $(1))
 QUERY_PACKAGESPEC_BY_ID = $(call QUERY_LOCK,$(call YQ_PACKAGE_PATH_BY_ID,$(1)) | $(2))
@@ -185,8 +189,20 @@ STAT := stat
 FIND := find
 endif
 
-# Include any additional config files.
-include $(REPO_ROOT)/$(RELEASE_DIR)/config-*.mk
+# Read config from the spec.
+
+# PRODUCT_REPO is the official Git repo for this project.
+PRODUCT_REPO := $(shell $(call QUERY_SPEC,.config["product-repo"]))
+
+# PRODUCT_PATH must be unique for every repo.
+# A golang-style package path is ideal.
+PRODUCT_PATH := $(shell $(call QUERY_SPEC,.config["product-id"]))
+
+# PRODUCT_CIRCLECI_SLUG is the slug of this repo's CircleCI project.
+PRODUCT_CIRCLECI_SLUG := $(shell $(call QUERY_SPEC,.config["circleci-project-slug"]))
+
+# PRODUCT_CIRCLECI_HOST is the host configured to build this repo.
+PRODUCT_CIRCLECI_HOST := $(shell $(call QUERY_SPEC,.config["circleci-host"]))
 
 # End including config once only.
 endif

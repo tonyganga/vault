@@ -10,6 +10,17 @@
 # of package and layer specs. This fully expanded file is in turn used to drive the
 # build process, and as data for templating CI config.
 
+# config contains packagespec config for this repo.
+config:
+  # product-repo is important to any CI providers.
+  product-repo:          git@github.com:hashicorp/vault.git
+  # product-id is used by external systems to identify this product.
+  # It can be any unique name, buy a golang import path style string
+  # is ideal.
+  product-id:            github.com/hashicorp/vault
+  circleci-project-slug: gh/hashicorp/vault
+  circleci-host:         circleci.com
+
 # inputs are a set of environment variables that may affect the set of bytes produced
 # for a given package. Note that a package is a zip file containing the binary, so
 # the name of the binary does affect the package's bytes.
