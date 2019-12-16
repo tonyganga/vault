@@ -211,10 +211,12 @@ package-aliases:
 # NOTE: At present, changing the names and/or adding/removing layers may
 # require updating the CI template file at .circleci/config/@build-release.yml.tpl
 # which references some of these layers by name.
-base-image: debian:buster
 layers:
   - name: base
+    source-include: ""
+    source-exclude: ""
     dockerfile: |-
+      FROM debian:buster
       RUN apt-get update -y && apt-get install --no-install-recommends -y -q \
                                curl \
                                zip \
@@ -229,6 +231,8 @@ layers:
       						             bash \
                             && rm -rf /var/lib/apt/lists/*
   - name: install-go
+    source-include: ""
+    source-exclude: ""
     dockerfile: |-
       ENV GOPATH /gopath
       ENV GOROOT /goroot
@@ -237,6 +241,8 @@ layers:
                  | tar xzf - -C $GOROOT --strip-components=1
       ENV PATH $GOROOT/bin:$GOPATH/bin:$PATH
   - name: install-go-tools
+    source-include: ""
+    source-exclude: ""
     dockerfile: |
       RUN go get golang.org/x/tools/cmd/goimports
       RUN go get github.com/hashicorp/go-bindata
@@ -244,12 +250,16 @@ layers:
       RUN go get github.com/elazarl/go-bindata-assetfs
       RUN go get github.com/elazarl/go-bindata-assetfs/go-bindata-assetfs
   - name: set-workdir
+    source-include: ""
+    source-exclude: ""
     dockerfile: |
       ENV REPO=github.com/hashicorp/vault
       ENV DIR=$GOPATH/src/$REPO
       RUN mkdir -p $DIR
       WORKDIR $DIR
   - name: install-yarn
+    source-include: ""
+    source-exclude: ""
     dockerfile: |-
       RUN curl -sL https://deb.nodesource.com/setup_10.x | bash -
       RUN curl -sL https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add -
@@ -260,15 +270,20 @@ layers:
     source-include: ui/package.json ui/yarn.lock
     source-exclude: ""
     dockerfile: |-
+      COPY . ./
       RUN cd ui && yarn install
       RUN cd ui && npm rebuild node-sass
   - name: build-ui
     source-include: ui/
+    source-exclude: ""
     dockerfile: |-
+      COPY . ./
       RUN cd ui && yarn run build
   - name: build-static-assets
     source-include: Makefile
+    source-exclude: ""
     dockerfile: |-
+      COPY . ./
       RUN go-bindata-assetfs -o bindata_assetfs.go -pkg http -prefix pkg -modtime 1480000000 -tags ui ./pkg/web_ui/...
       RUN mkdir -p http && mv bindata_assetfs.go http/
       RUN goimports -w http/bindata_assetfs.go
@@ -280,7 +295,9 @@ layers:
   # This means we should cache this in CI per package build.
   - name: warm-go-build-vendor-cache
     source-include: vendor/
+    source-exclude: ""
     dockerfile: |-
+      COPY . ./
       ENV GOOS={{.GOOS}}
       ENV GOARCH={{.GOARCH}}
       ENV CGO_ENABLED={{.CGO_ENABLED}}
@@ -295,4 +312,5 @@ layers:
   - name: copy-source
     source-include: .
     source-exclude: vendor/ ui/
-    dockerfile:
+    dockerfile: |-
+      COPY . ./

@@ -118,9 +118,12 @@ prep: fmtcheck
 	@[ ! -d .git/hooks ] || grep -l '^# husky$$' .git/hooks/* | xargs rm -f
 	@if [ -d .git/hooks ]; then cp .hooks/* .git/hooks/; fi
 
+PACKAGES_LOCK_DIR := $(shell find . -mindepth 1 -maxdepth 1 \
+	-type d -name 'packages*.lock')
+
 CI_WORKFLOW_TPL     := .circleci/config/@build-release.yml.tpl
 CI_WORKFLOW         := .circleci/config/@build-release.yml
-PACKAGE_SPEC        := $(shell find release -mindepth 2 -maxdepth 2 -name pkgs.yml)
+PACKAGE_SPEC        := $(PACKAGES_LOCK_DIR)/pkgs.yml
 
 .PHONY: ci-update-release-packages $(CI_WORKFLOW)
 ci-update-release-packages: $(CI_WORKFLOW)
@@ -285,14 +288,30 @@ publish-commit:
 	@[ -n "$(PUBLISH_VERSION)" ] || { echo "You must set PUBLISH_VERSION to the version in semver-like format."; exit 1; }
 	set -x; $(GPG_KEY_VARS) && git commit --allow-empty --gpg-sign=$$GIT_GPG_KEY_ID -m 'release: publish v$(PUBLISH_VERSION)'
 
+# SPEC is the human-managed description of which packages we are able to build.
+SPEC_FILE_PATTERN := packages*.yml
+SPEC := $(shell find . -mindepth 1 -maxdepth 1 -name '$(SPEC_FILE_PATTERN)')
+ifneq ($(words $(SPEC)),1)
+$(error Found $(words $(SPEC)) $(SPEC_FILE_PATTERN) files, need exactly 1: $(SPEC))
+endif
+SPEC_FILENAME := $(notdir $(SPEC))
+SPEC_MODIFIER := $(SPEC_FILENAME:packages%.yml=%)
+# LOCKDIR contains the lockfile and layer files.
+LOCKDIR := packages$(SPEC_MODIFIER).lock
+
 packages:
-	@$(MAKE) -C release packages
+	@command -v packagespec > /dev/null 2>&1 || { \
+		echo "Please install packagespec: 'go get github.com/hashicorp/packagespec/cmd/packagespec'"; \
+		echo "Note: packagespec is only available to HashiCorp employees at present."; \
+		exit 1; \
+	}
+	@packagespec lock -specfile $(SPEC) -lockdir $(LOCKDIR)
 
 build:
-	@$(MAKE) -C release build
+	@$(MAKE) -C $(LOCKDIR) build
 
 build-ci:
-	make -C release build-ci
+	@$(MAKE) -C $(LOCKDIR) build-ci
 
 .PHONY: bin default prep test vet bootstrap fmt fmtcheck mysql-database-plugin mysql-legacy-database-plugin cassandra-database-plugin influxdb-database-plugin postgresql-database-plugin mssql-database-plugin hana-database-plugin mongodb-database-plugin static-assets ember-dist ember-dist-dev static-dist static-dist-dev assetcheck check-vault-in-path check-browserstack-creds test-ui-browserstack stage-commit publish-commit packages build build-ci
 
