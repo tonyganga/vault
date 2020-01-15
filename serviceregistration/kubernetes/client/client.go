@@ -113,6 +113,7 @@ func (c *Client) do(req *http.Request, ptrToReturnObj interface{}) error {
 		switch resp.StatusCode {
 		case 200, 201, 202:
 			// Pass.
+			break
 		case 401, 403:
 			// Perhaps the token from our bearer token file has been refreshed.
 			config, err := inClusterConfig()
