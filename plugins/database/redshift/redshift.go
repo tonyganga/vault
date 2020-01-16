@@ -410,7 +410,9 @@ func (p *RedShift) defaultRevokeUser(ctx context.Context, username string) error
 		revocationStmts = append(revocationStmts, fmt.Sprintf(
 			`REVOKE CONNECT ON DATABASE %s FROM %s;`,
 			pq.QuoteIdentifier(dbname.String),
-			pq.QuoteIdentifier(username)))
+			pq.QuoteIdentifier(username))...)
+
+		fmt.Printf("revoke CONN: %+v", revocationStmts)
 	}
 
 	// again, here, we do not stop on error, as we want to remove as
