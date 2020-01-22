@@ -34,7 +34,7 @@ func NewServiceRegistration(shutdownCh <-chan struct{}, config map[string]string
 	case config["namespace"] != "":
 		namespace = config["namespace"]
 	default:
-		namespace = client.DefaultNamespace
+		return nil, fmt.Errorf(`namespace must be provided via %q or the "namespace" config parameter`, client.EnvVarKubernetesNamespace)
 	}
 	if logger.IsDebug() {
 		logger.Debug(fmt.Sprintf("namespace: %q", namespace))

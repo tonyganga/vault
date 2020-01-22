@@ -10,9 +10,6 @@ import (
 )
 
 const (
-	// This is Kubernetes' default namespace.
-	DefaultNamespace = "default"
-
 	// These environment variables aren't set by default.
 	// Vault may read them in if set through these environment variables.
 	// Example here:

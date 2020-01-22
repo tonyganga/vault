@@ -13,8 +13,10 @@ import (
 )
 
 var (
-	ErrNotFound     = errors.New("not found")
-	ErrNotInCluster = errors.New("unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined")
+	ErrNamespaceUnset = errors.New(`"namespace" is unset`)
+	ErrPodNameUnset   = errors.New(`"podName" is unset`)
+	ErrNotFound       = errors.New("not found")
+	ErrNotInCluster   = errors.New("unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined")
 )
 
 type Pod struct {
@@ -45,6 +47,14 @@ func (c *Client) GetPod(namespace, podName string) (*Pod, error) {
 	endpoint := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s", namespace, podName)
 	method := http.MethodGet
 
+	// Validate that we received required parameters.
+	if namespace == "" {
+		return nil, ErrNamespaceUnset
+	}
+	if podName == "" {
+		return nil, ErrPodNameUnset
+	}
+
 	req, err := http.NewRequest(method, c.config.Host+endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -63,6 +73,18 @@ func (c *Client) GetPod(namespace, podName string) (*Pod, error) {
 func (c *Client) PatchPod(namespace, podName string, patches ...*Patch) error {
 	endpoint := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s", namespace, podName)
 	method := http.MethodPatch
+
+	// Validate that we received required parameters.
+	if namespace == "" {
+		return ErrNamespaceUnset
+	}
+	if podName == "" {
+		return ErrPodNameUnset
+	}
+	if len(patches) == 0 {
+		// No work to perform.
+		return nil
+	}
 
 	var jsonPatches []interface{}
 	for _, patch := range patches {
