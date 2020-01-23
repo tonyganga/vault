@@ -22,7 +22,7 @@ const (
 )
 
 func NewServiceRegistration(shutdownCh <-chan struct{}, config map[string]string, logger log.Logger, state *sr.State, _ string) (sr.ServiceRegistration, error) {
-	c, err := client.New()
+	c, err := client.New(logger)
 	if err != nil {
 		return nil, err
 	}
@@ -58,17 +58,62 @@ func NewServiceRegistration(shutdownCh <-chan struct{}, config map[string]string
 	if err != nil {
 		return nil, err
 	}
-	if pod.Metadata["labels"] == nil {
-		return nil, fmt.Errorf(`pod name %q in namespace %q must have "/metadata/labels" to be usable for service registration`, podName, namespace)
+
+	// If this Kube pod doesn't already have metadata and labels, we won't
+	// be able to add them. This is discussed here:
+	// https://stackoverflow.com/questions/57480205/error-while-applying-json-patch-to-kubernetes-custom-resource
+	// Let's check what exists and create whatever we need.
+	if pod.Metadata == nil {
+		if err := c.PatchPod(namespace, podName, &client.Patch{
+			Operation: client.Replace,
+			Path:      "/metadata",
+			Value:     make(map[string]interface{}),
+		}); err != nil {
+			return nil, err
+		}
 	}
+	if pod.Metadata.Labels == nil {
+		if err := c.PatchPod(namespace, podName, &client.Patch{
+			Operation: client.Replace,
+			Path:      "/metadata/labels",
+			Value:     make(map[string]string),
+		}); err != nil {
+			return nil, err
+		}
+	}
+	// TODO once this is written, test this on pods in all these situations IRL:
+	// 1. has no metadata
+	// 2. has no labels
+	// 3. has a labels field but no values
+	// 4. has a labels field with some values
 
 	// Perform an initial labelling of Vault as it starts up.
 	patches := []*client.Patch{
-		{Path: pathToLabels + labelVaultVersion, Value: state.VaultVersion},
-		{Path: pathToLabels + labelActive, Value: toString(state.IsActive)},
-		{Path: pathToLabels + labelSealed, Value: toString(state.IsSealed)},
-		{Path: pathToLabels + labelPerfStandby, Value: toString(state.IsPerformanceStandby)},
-		{Path: pathToLabels + labelInitialized, Value: toString(state.IsInitialized)},
+		{
+			Operation: client.Add,
+			Path:      pathToLabels + labelVaultVersion,
+			Value:     state.VaultVersion,
+		},
+		{
+			Operation: client.Add,
+			Path:      pathToLabels + labelActive,
+			Value:     toString(state.IsActive),
+		},
+		{
+			Operation: client.Add,
+			Path:      pathToLabels + labelSealed,
+			Value:     toString(state.IsSealed),
+		},
+		{
+			Operation: client.Add,
+			Path:      pathToLabels + labelPerfStandby,
+			Value:     toString(state.IsPerformanceStandby),
+		},
+		{
+			Operation: client.Add,
+			Path:      pathToLabels + labelInitialized,
+			Value:     toString(state.IsInitialized),
+		},
 	}
 	if err := c.PatchPod(namespace, podName, patches...); err != nil {
 		return nil, err
@@ -94,29 +139,33 @@ type serviceRegistration struct {
 
 func (r *serviceRegistration) NotifyActiveStateChange(isActive bool) error {
 	return r.client.PatchPod(r.namespace, r.podName, &client.Patch{
-		Path:  pathToLabels + labelActive,
-		Value: toString(isActive),
+		Operation: client.Add,
+		Path:      pathToLabels + labelActive,
+		Value:     toString(isActive),
 	})
 }
 
 func (r *serviceRegistration) NotifySealedStateChange(isSealed bool) error {
 	return r.client.PatchPod(r.namespace, r.podName, &client.Patch{
-		Path:  pathToLabels + labelSealed,
-		Value: toString(isSealed),
+		Operation: client.Add,
+		Path:      pathToLabels + labelSealed,
+		Value:     toString(isSealed),
 	})
 }
 
 func (r *serviceRegistration) NotifyPerformanceStandbyStateChange(isStandby bool) error {
 	return r.client.PatchPod(r.namespace, r.podName, &client.Patch{
-		Path:  pathToLabels + labelPerfStandby,
-		Value: toString(isStandby),
+		Operation: client.Add,
+		Path:      pathToLabels + labelPerfStandby,
+		Value:     toString(isStandby),
 	})
 }
 
 func (r *serviceRegistration) NotifyInitializedStateChange(isInitialized bool) error {
 	return r.client.PatchPod(r.namespace, r.podName, &client.Patch{
-		Path:  pathToLabels + labelInitialized,
-		Value: toString(isInitialized),
+		Operation: client.Add,
+		Path:      pathToLabels + labelInitialized,
+		Value:     toString(isInitialized),
 	})
 }
 
@@ -125,10 +174,26 @@ func (r *serviceRegistration) onShutdown(shutdownCh <-chan struct{}) {
 
 	// Label the pod with the values we want to leave behind after shutdown.
 	patches := []*client.Patch{
-		{Path: pathToLabels + labelActive, Value: toString(false)},
-		{Path: pathToLabels + labelSealed, Value: toString(true)},
-		{Path: pathToLabels + labelPerfStandby, Value: toString(false)},
-		{Path: pathToLabels + labelInitialized, Value: toString(false)},
+		{
+			Operation: client.Add,
+			Path:      pathToLabels + labelActive,
+			Value:     toString(false),
+		},
+		{
+			Operation: client.Add,
+			Path:      pathToLabels + labelSealed,
+			Value:     toString(true),
+		},
+		{
+			Operation: client.Add,
+			Path:      pathToLabels + labelPerfStandby,
+			Value:     toString(false),
+		},
+		{
+			Operation: client.Add,
+			Path:      pathToLabels + labelInitialized,
+			Value:     toString(false),
+		},
 	}
 	if err := r.client.PatchPod(r.namespace, r.podName, patches...); err != nil {
 		if r.logger.IsError() {

@@ -10,7 +10,12 @@ import (
 	"net/http"
 
 	"github.com/hashicorp/go-cleanhttp"
+	"github.com/hashicorp/go-hclog"
 )
+
+// maxRetries is the maximum number of times the client
+// should retry.
+const maxRetries = 10
 
 var (
 	ErrNamespaceUnset = errors.New(`"namespace" is unset`)
@@ -20,24 +25,66 @@ var (
 )
 
 type Pod struct {
-	Metadata map[string]interface{}
+	Metadata *Metadata `json:"metadata,omitempty"`
+}
+
+type Metadata struct {
+	Name string `json:"name,omitempty"`
+
+	// This map will be nil if no "labels" key was provided.
+	// It will be populated but have a length of zero if the
+	// key was provided, but no values.
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+type PatchOperation int
+
+const (
+	// When adding support for more PatchOperations in the future,
+	// DO NOT alphebetize them because it will change the underlying
+	// int representing a user's intent. If that's stored anywhere,
+	// it will cause storage reads to map to the incorrect operation.
+	Unset PatchOperation = iota
+	Add
+	Replace
+)
+
+func (p PatchOperation) String() string {
+	switch p {
+	case Unset:
+		// This is an invalid choice, and will be shown on a patch
+		// where the PatchOperation is unset. That's because ints
+		// default to 0, and Unset corresponds to 0.
+		return "unset"
+	case Add:
+		return "add"
+	case Replace:
+		return "replace"
+	default:
+		// Should never arrive here.
+		return ""
+	}
 }
 
 type Patch struct {
-	Path, Value string
+	Operation PatchOperation
+	Path      string
+	Value     interface{}
 }
 
-func New() (*Client, error) {
+func New(logger hclog.Logger) (*Client, error) {
 	config, err := inClusterConfig()
 	if err != nil {
 		return nil, err
 	}
 	return &Client{
+		logger: logger,
 		config: config,
 	}, nil
 }
 
 type Client struct {
+	logger hclog.Logger
 	config *Config
 }
 
@@ -88,8 +135,11 @@ func (c *Client) PatchPod(namespace, podName string, patches ...*Patch) error {
 
 	var jsonPatches []interface{}
 	for _, patch := range patches {
-		jsonPatches = append(jsonPatches, map[string]string{
-			"op":    "add",
+		if patch.Operation == Unset {
+			return errors.New("patch operation must be set")
+		}
+		jsonPatches = append(jsonPatches, map[string]interface{}{
+			"op":    patch.Operation.String(),
 			"path":  patch.Path,
 			"value": patch.Value,
 		})
@@ -117,60 +167,84 @@ func (c *Client) do(req *http.Request, ptrToReturnObj interface{}) error {
 		},
 	}
 
-	haveTriedOrigToken := false
-	haveTriedNewToken := false
-	for !haveTriedOrigToken || !haveTriedNewToken {
-		// Execute it.
-		resp, err := client.Do(req)
-		if err != nil {
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		shouldRetry, err := c.attemptRequest(client, req, ptrToReturnObj)
+		if !shouldRetry {
+			// The error may be nil or populated depending on whether the
+			// request was successful.
 			return err
 		}
-		if !haveTriedOrigToken {
-			haveTriedOrigToken = true
-		} else {
-			haveTriedNewToken = true
-		}
-
-		// Check for success.
-		switch resp.StatusCode {
-		case 200, 201, 202:
-			// Pass.
-			break
-		case 401, 403:
-			// Perhaps the token from our bearer token file has been refreshed.
-			config, err := inClusterConfig()
-			if err != nil {
-				return err
-			}
-			c.config = config
-			// Continue to try again.
-			continue
-		case 404:
-			return ErrNotFound
-		default:
-			return fmt.Errorf("unexpected status code: %s", sanitizedDebuggingInfo(req, resp))
-		}
-
-		// If we're not supposed to read out the body, we have nothing further
-		// to do here.
-		if ptrToReturnObj == nil {
-			return nil
-		}
-
-		// Attempt to read out the body into the given return object.
-		if err := json.NewDecoder(resp.Body).Decode(ptrToReturnObj); err != nil {
-			return fmt.Errorf("unable to read as %T: %s", ptrToReturnObj, sanitizedDebuggingInfo(req, resp))
-		}
+		lastErr = err
 	}
-	return nil
+	return lastErr
+}
+
+func (c *Client) attemptRequest(client *http.Client, req *http.Request, ptrToReturnObj interface{}) (shouldRetry bool, err error) {
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			if c.logger.IsWarn() {
+				// TODO use errwrap :-( and everywhere else.
+				// Failing to close response bodies can present as a memory leak so it's
+				// important to surface it.
+				c.logger.Warn(fmt.Sprintf("unable to close response body: %s", err))
+			}
+		}
+	}()
+
+	// Check for success.
+	switch resp.StatusCode {
+	case 200, 201, 202:
+		// Pass.
+	case 401, 403:
+		// Perhaps the token from our bearer token file has been refreshed.
+		config, err := inClusterConfig()
+		if err != nil {
+			return false, err
+		}
+		if config.BearerToken == c.config.BearerToken {
+			// It's the same token.
+			return false, fmt.Errorf("bad status code: %s", sanitizedDebuggingInfo(req, resp))
+		}
+		c.config = config
+		// Continue to try again, but return the error too in case the caller would rather read it out.
+		return true, fmt.Errorf("bad status code: %s", sanitizedDebuggingInfo(req, resp))
+	case 404:
+		return false, ErrNotFound
+	default:
+		return false, fmt.Errorf("unexpected status code: %s", sanitizedDebuggingInfo(req, resp))
+	}
+
+	// If we're not supposed to read out the body, we have nothing further
+	// to do here.
+	if ptrToReturnObj == nil {
+		return false, nil
+	}
+
+	// Attempt to read out the body into the given return object.
+	return false, json.NewDecoder(resp.Body).Decode(ptrToReturnObj)
 }
 
 // sanitizedDebuggingInfo converts an http response to a string without
-// including its headers, to avoid leaking authorization
+// including its headers to avoid leaking authorization
 // headers.
 func sanitizedDebuggingInfo(req *http.Request, resp *http.Response) string {
-	// Ignore error here because if we're unable to read the body or
-	// it doesn't exist, it'll just be "", which is fine.
-	body, _ := ioutil.ReadAll(resp.Body)
-	return fmt.Sprintf("method: %s, url: %s, statuscode: %d, body: %s", req.Method, req.URL, resp.StatusCode, body)
+	var reqBody []byte
+	if req.Body != nil {
+		// Ignore error here because if we're unable to read the reqBody or
+		// it doesn't exist, it'll just be "", which is fine.
+		reqBody, _ = ioutil.ReadAll(req.Body)
+
+		// Reattach the body since we just drained it.
+		reqBodyReader := bytes.NewReader(reqBody)
+		req.Body = ioutil.NopCloser(reqBodyReader)
+	}
+
+	// Same here, it's fine to ignore the error.
+	respBody, _ := ioutil.ReadAll(resp.Body)
+	return fmt.Sprintf("req method: %s, req url: %s, req body: %s, resp statuscode: %d, resp respBody: %s", req.Method, req.URL, reqBody, resp.StatusCode, respBody)
 }

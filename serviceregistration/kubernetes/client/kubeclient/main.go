@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/serviceregistration/kubernetes/client"
 )
 
@@ -41,7 +42,7 @@ func init() {
 func main() {
 	flag.Parse()
 
-	c, err := client.New()
+	c, err := client.New(hclog.Default())
 	if err != nil {
 		panic(err)
 	}

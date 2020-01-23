@@ -9,10 +9,6 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: vault
-  # Please note, it's essential that "labels" be included even if they are blank,
-  # otherwise, labels can't be manipulated to perform service registration.
-  labels:
-    vault: "true"
 spec:
   containers:
     - name: nginx
