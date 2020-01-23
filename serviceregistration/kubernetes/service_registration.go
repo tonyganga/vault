@@ -63,7 +63,9 @@ func NewServiceRegistration(shutdownCh <-chan struct{}, config map[string]string
 	// be able to add them. This is discussed here:
 	// https://stackoverflow.com/questions/57480205/error-while-applying-json-patch-to-kubernetes-custom-resource
 	// Let's check what exists and create whatever we need.
+	// TODO can this read more elegantly?
 	if pod.Metadata == nil {
+		// Create the metadata and labels.
 		if err := c.PatchPod(namespace, podName, &client.Patch{
 			Operation: client.Replace,
 			Path:      "/metadata",
@@ -71,8 +73,15 @@ func NewServiceRegistration(shutdownCh <-chan struct{}, config map[string]string
 		}); err != nil {
 			return nil, err
 		}
-	}
-	if pod.Metadata.Labels == nil {
+		if err := c.PatchPod(namespace, podName, &client.Patch{
+			Operation: client.Replace,
+			Path:      "/metadata/labels",
+			Value:     make(map[string]string),
+		}); err != nil {
+			return nil, err
+		}
+	} else if pod.Metadata.Labels == nil {
+		// Just create the labels.
 		if err := c.PatchPod(namespace, podName, &client.Patch{
 			Operation: client.Replace,
 			Path:      "/metadata/labels",

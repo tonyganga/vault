@@ -22,7 +22,9 @@ const (
 // so the caller can check current state. Calling the closeFunc
 // at the end closes the test server. Responses are provided using
 // real responses that have been captured from the Kube API.
-func TestServer(t *testing.T) (currentPatches map[string]string, closeFunc func()) {
+func TestServer(t *testing.T) (currentPatches map[string]*Patch, closeFunc func()) {
+	currentPatches = make(map[string]*Patch)
+
 	// We're going to have multiple close funcs to call.
 	var closers []func()
 	closeFunc = func() {
@@ -71,7 +73,6 @@ func TestServer(t *testing.T) (currentPatches map[string]string, closeFunc func(
 	}
 	rootCAFile = tmpCACrt.Name()
 
-	currentPatches = make(map[string]string)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		namespace, podName, err := parsePath(r.URL.Path)
 		if err != nil {
@@ -99,8 +100,11 @@ func TestServer(t *testing.T) (currentPatches map[string]string, closeFunc func(
 			for _, patch := range patches {
 				patchMap := patch.(map[string]interface{})
 				p := patchMap["path"].(string)
-				v := patchMap["value"]
-				currentPatches[p] = v.(string)
+				currentPatches[p] = &Patch{
+					Operation: Parse(patchMap["op"].(string)),
+					Path:      p,
+					Value:     patchMap["value"],
+				}
 			}
 			w.WriteHeader(200)
 			w.Write([]byte(updatePodTagsResponse))

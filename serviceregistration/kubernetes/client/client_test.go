@@ -7,7 +7,7 @@ import (
 )
 
 func TestClient(t *testing.T) {
-	currentLabels, closeFunc := TestServer(t)
+	currentPatches, closeFunc := TestServer(t)
 	defer closeFunc()
 
 	client, err := New(hclog.Default())
@@ -16,7 +16,7 @@ func TestClient(t *testing.T) {
 	}
 	e := &env{
 		client:         client,
-		currentPatches: currentLabels,
+		currentPatches: currentPatches,
 	}
 	e.TestGetPod(t)
 	e.TestGetPodNotFound(t)
@@ -26,7 +26,7 @@ func TestClient(t *testing.T) {
 
 type env struct {
 	client         *Client
-	currentPatches map[string]string
+	currentPatches map[string]*Patch
 }
 
 func (e *env) TestGetPod(t *testing.T) {
@@ -58,9 +58,9 @@ func (e *env) TestUpdatePodTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(e.currentPatches) != 1 {
-		t.Fatalf("expected 1 label but received %q", e.currentPatches)
+		t.Fatalf("expected 1 label but received %+v", e.currentPatches)
 	}
-	if e.currentPatches["/metadata/labels/fizz"] != "buzz" {
+	if e.currentPatches["/metadata/labels/fizz"].Value != "buzz" {
 		t.Fatalf("expected buzz but received %q", e.currentPatches["fizz"])
 	}
 }

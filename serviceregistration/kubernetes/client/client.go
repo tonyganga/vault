@@ -49,6 +49,17 @@ const (
 	Replace
 )
 
+func Parse(s string) PatchOperation {
+	switch s {
+	case "add":
+		return Add
+	case "replace":
+		return Replace
+	default:
+		return Unset
+	}
+}
+
 func (p PatchOperation) String() string {
 	switch p {
 	case Unset:
